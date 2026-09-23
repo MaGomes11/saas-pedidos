@@ -1,5 +1,13 @@
 # Render Blueprint — deploy do Saas Pedidos (Render.com)
 # Uso: dashboard.render.com → New → Blueprint → escolha o repositório.
+#
+# IMPORTANTE sobre persistência:
+# - Plano FREE: o container é descartável e NÃO suporta disco persistente.
+#   O SQLite vai para /tmp/buffet.db → os dados SÃO APAGADOS a cada restart
+#   (a instância free também "dorme" após 15 min de inatividade).
+#   Serve como DEMO/teste; no primeiro boot o banco é recriado com os dados de exemplo.
+# - Planos PAGOS (Starter+): descomente o bloco "disk" abaixo e use
+#   DB_PATH=/var/data/buffet.db → dados persistentes.
 services:
   - type: web
     name: saas-pedidos
@@ -12,14 +20,16 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # FREE: banco volátil (demo). Em plano pago, troque para /var/data/buffet.db
       - key: DB_PATH
-        value: /var/data/buffet.db
+        value: /tmp/buffet.db
       # Defina os valores abaixo no painel do Render após criar o serviço
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
+    # --- PLANO PAGO (Starter ou superior): descomente para persistência ---
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1

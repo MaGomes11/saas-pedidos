@@ -25,20 +25,28 @@ O **Vercel não é compatível** (SQLite em arquivo + SSE em tempo real não fun
 ### Rápido (Blueprint — 1 clique)
 1. Crie conta em https://render.com (grátis).
 2. Dashboard → **New → Blueprint** → conecte o repositório do GitHub.
-3. O Render lê o `render.yaml` já pronto e cria o serviço com disco persistente.
+3. O Render lê o `render.yaml` já pronto e cria o serviço.
 4. No serviço criado, em **Environment**: preencha `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
 5. Espere o deploy terminar e abra o link `https://saas-pedidos.onrender.com`.
+
+> ⚠️ **Plano free = dados voláteis.** O plano gratuito do Render **não suporta disco
+> persistente** — o SQLite vai para `/tmp` e é apagado a cada restart da instância
+> (a free também "dorme" após ~15 min de inatividade). O banco é recriado com os
+> dados de exemplo no primeiro boot. Serve para **testar/demonstrar**.
+> Para dados permanentes, use o plano **Starter** (US$ 7/mês): no painel do serviço,
+> aba **Disks** → adicione disco (`data` → `/var/data` → 1 GB) e mude a variável
+> `DB_PATH` para `/var/data/buffet.db` (no `render.yaml` basta descomentar o bloco `disk`).
 
 ### Manual (Web Service)
 1. **New → Web Service** → conecte o repositório.
 2. Configurações:
    - **Build Command:** `npm install`
    - **Start Command:** `npm start`
-   - **Instance Type:** Free (ou Starter)
-3. **Disks** (aba do serviço): adicione um disco persistente:
+   - **Instance Type:** Free (demo — dados voláteis) ou Starter (produção — com disco)
+3. **Disks** (aba do serviço — **apenas plano pago**): adicione um disco persistente:
    - Name: `data` | Mount Path: `/var/data` | Size: 1 GB
 4. **Environment** (variáveis):
-   - `DB_PATH` = `/var/data/buffet.db`
+   - `DB_PATH` = `/var/data/buffet.db` (com disco) **ou** `/tmp/buffet.db` (free, somente demo)
    - `ADMIN_EMAIL` = seu e-mail
    - `ADMIN_PASSWORD` = sua senha (mín. 8)
 5. **Deploy** → aguarde → abra o link `https://<serviço>.onrender.com`.

@@ -590,10 +590,15 @@ function seedSample(now) {
     insTable.run(partyId, `Mesa ${String(i).padStart(2, '0')}`, 8, 'livre', now);
   }
 
-  const atendente = db.prepare('SELECT id FROM users WHERE email = ?').get('atendente@buffet.local');
-  const cozinheiro = db.prepare('SELECT id FROM users WHERE email = ?').get('cozinha@buffet.local');
-  const entrega = db.prepare('SELECT id FROM users WHERE email = ?').get('entrega@buffet.local');
-  const admin = db.prepare('SELECT id FROM users WHERE email = ?').get('admin@buffet.local');
+  // Usuários dos pedidos de exemplo. O admin é localizado pelo papel
+  // (funciona mesmo com ADMIN_EMAIL personalizado no primeiro boot);
+  // os demais são os usuários demo, sempre criados acima — com fallback para o admin.
+  const admin = db.prepare("SELECT id FROM users WHERE role = 'administrador' ORDER BY id LIMIT 1").get();
+  if (!admin) throw new Error('Nenhum administrador encontrado para criar os dados de exemplo.');
+  const demoUser = (email) => db.prepare('SELECT id FROM users WHERE email = ?').get(email) || admin;
+  const atendente = demoUser('atendente@buffet.local');
+  const cozinheiro = demoUser('cozinha@buffet.local');
+  const entrega = demoUser('entrega@buffet.local');
 
   // Pedidos de exemplo em vários status (para demonstrar o Kanban)
   const insOrder = db.prepare(

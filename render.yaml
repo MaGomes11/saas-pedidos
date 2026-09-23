@@ -13,7 +13,7 @@ services:
     name: saas-pedidos
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install -g npm@10 && npm ci --foreground-scripts
     startCommand: npm start
     healthCheckPath: /
     autoDeploy: true

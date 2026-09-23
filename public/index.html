@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Saas Pedidos · Sistema de Pedidos</title>
+  <meta name="description" content="Saas Pedidos — sistema web de pedidos para buffet (sem controles financeiros)" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍽️</text></svg>" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Topbar -->
+    <header class="topbar" id="topbar">
+      <button class="icon-btn" id="btn-menu" aria-label="Abrir menu" title="Menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+      </button>
+      <a class="brand" href="#/dashboard">
+        <span class="brand-ico">🍽️</span>
+        <span class="brand-txt" id="brand-name"><span>Saas</span> <strong>Pedidos</strong></span>
+      </a>
+      <div class="topbar-right">
+        <button class="icon-btn" id="btn-notif" aria-label="Notificações" title="Notificações">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm6-6v-5a6 6 0 0 0-4-5.65V5a2 2 0 1 0-4 0v.35A6 6 0 0 0 6 11v5l-2 2v1h16v-1z"/></svg>
+          <span class="badge-dot" id="notif-count" hidden>0</span>
+        </button>
+        <div class="user-chip" id="user-chip" tabindex="0" role="button" aria-haspopup="menu" aria-label="Conta do usuário">
+          <span class="avatar" id="user-avatar">?</span>
+          <span class="user-meta">
+            <strong id="user-name">—</strong>
+            <small id="user-role">—</small>
+          </span>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
+        </div>
+        <div class="dropdown-menu" id="user-menu" hidden>
+          <a href="#" id="btn-logout">Sair da conta</a>
+        </div>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar" aria-label="Navegação principal">
+      <ul id="nav-list"></ul>
+    </nav>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+
+    <!-- Conteúdo -->
+    <main class="content" id="view" tabindex="-1"></main>
+  </div>
+
+  <!-- Panel de notificações -->
+  <aside class="notif-panel" id="notif-panel" hidden>
+    <header class="notif-head">
+      <strong>Notificações</strong>
+      <button class="btn btn-sm btn-ghost" id="btn-notif-all">Marcar todas como lidas</button>
+    </header>
+    <div id="notif-list" class="notif-list"></div>
+  </aside>
+
+  <!-- Raízes de UI -->
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

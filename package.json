@@ -1,0 +1,30 @@
+{
+  "name": "cardapio-buffet",
+  "version": "1.0.0",
+  "description": "Sistema web de pedidos para buffet - sem controles financeiros",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/db.js --reset"
+  },
+  "keywords": [
+    "buffet",
+    "pedidos",
+    "kanban",
+    "festa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^12.4.1",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "zod": "^4.1.12"
+  }
+}

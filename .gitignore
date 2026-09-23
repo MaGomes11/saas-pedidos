@@ -1,0 +1,20 @@
+# Dependências
+node_modules/
+
+# Banco de dados local (SQLite) — em produção o disco persistente fica fora do repo
+data/
+
+# Ambientes / segredos
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operacional / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

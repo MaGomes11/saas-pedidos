@@ -1,0 +1,25 @@
+# Render Blueprint — deploy do Saas Pedidos (Render.com)
+# Uso: dashboard.render.com → New → Blueprint → escolha o repositório.
+services:
+  - type: web
+    name: saas-pedidos
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DB_PATH
+        value: /var/data/buffet.db
+      # Defina os valores abaixo no painel do Render após criar o serviço
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1

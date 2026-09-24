@@ -4,6 +4,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 
+const db = require('./db');
 const { attachUser, requireAuth } = require('./auth');
 const { sseHandler } = require('./realtime');
 
@@ -46,6 +47,15 @@ app.use('/api/notifications', notificationRoutes);
 // Tempo real (SSE)
 app.get('/api/events', requireAuth, sseHandler);
 
+// Healthcheck (usado pelo Render e útil no Vercel)
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    serverless: process.env.VERCEL === '1',
+    driver: db.IS_LIBSQL ? 'libsql' : 'sqlite',
+  });
+});
+
 // Frontend estático
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -62,6 +72,18 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: status === 500 ? 'Erro interno do servidor.' : err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Sistema de buffet rodando em http://localhost:${PORT}`);
-});
+// No Vercel a inicialização fica por conta da função serverless (api/index.js).
+if (!process.env.VERCEL && require.main === module) {
+  db.init()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`🚀 Sistema de buffet rodando em http://localhost:${PORT}`);
+      });
+    })
+    .catch((e) => {
+      console.error('Falha ao inicializar o banco de dados:', e);
+      process.exit(1);
+    });
+}
+
+module.exports = app;

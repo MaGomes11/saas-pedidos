@@ -9,6 +9,13 @@ const { nowIso } = require('./util');
 const clients = new Set();
 
 function sseHandler(req, res) {
+  // No Vercel (serverless) conexões longas não funcionam — o frontend detecta
+  // o conteúdo não-SSE e passa para polling.
+  if (process.env.VERCEL === '1') {
+    res.status(200).type('text/plain').send('SSE indisponível no modo serverless; o app usa polling.');
+    return;
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -41,27 +48,29 @@ function broadcast(event, data) {
 // ---------------------------------------------------------------------------
 // Notificações
 // ---------------------------------------------------------------------------
-function notify({ type, title, message = '', partyId = null, orderId = null, audience = '*' }) {
-  const info = db.prepare(
-    'INSERT INTO notifications (type, title, message, party_id, order_id, audience, is_read, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)'
-  ).run(type, title, message, partyId, orderId, audience, nowIso());
+async function notify({ type, title, message = '', partyId = null, orderId = null, audience = '*' }) {
+  const info = await db.run(
+    'INSERT INTO notifications (type, title, message, party_id, order_id, audience, is_read, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+    type, title, message, partyId, orderId, audience, nowIso()
+  );
   const id = info.lastInsertRowid;
   broadcast('notification', { id, type, title, message, partyId, orderId, audience, createdAt: nowIso() });
   return id;
 }
 
-function markRead(id, userId) {
+async function markRead(id, userId) {
   // Cozinha/entrega/atendente podem marcar como lidas as do seu público/alvo
-  const row = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id);
+  const row = await db.get('SELECT * FROM notifications WHERE id = ?', id);
   if (!row) return null;
-  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
+  await db.run('UPDATE notifications SET is_read = 1 WHERE id = ?', id);
   return row;
 }
 
-function unreadCountFor(role) {
-  const row = db.prepare(
-    `SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 AND (audience = '*' OR audience = ? OR audience = 'cozinha')`
-  ).get(role);
+async function unreadCountFor(role) {
+  const row = await db.get(
+    `SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 AND (audience = '*' OR audience = ? OR audience = 'cozinha')`,
+    role
+  );
   return row.c;
 }
 

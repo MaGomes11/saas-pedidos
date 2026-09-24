@@ -10,7 +10,7 @@ router.use(requireAuth);
 router.use(requirePermission('historico_visualizar'));
 
 // Histórico/auditoria geral
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { entity_type, entity_id, user, date_from, date_to, q, limit } = req.query;
   let sql = `SELECT a.*, u.name AS user_name FROM audit_log a LEFT JOIN users u ON u.id = a.user_id WHERE 1=1`;
   const params = [];
@@ -22,11 +22,11 @@ router.get('/', (req, res) => {
   if (q) { sql += ' AND a.description LIKE ?'; params.push(`%${q}%`); }
   sql += ' ORDER BY a.id DESC';
   if (limit) { sql += ' LIMIT ?'; params.push(Math.min(toInt(limit, 200), 1000)); }
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.all(sql, ...params));
 });
 
 // Histórico de pedidos (todos, com filtros)
-router.get('/orders', (req, res) => {
+router.get('/orders', async (req, res) => {
   const { party_id, q, date_from, date_to, limit } = req.query;
   let sql = `SELECT oh.*, u.name AS user_name, o.code AS order_code, p.name AS party_name
              FROM order_history oh
@@ -41,7 +41,7 @@ router.get('/orders', (req, res) => {
   if (date_to) { sql += ' AND oh.created_at <= ?'; params.push(`${date_to} 23:59:59`); }
   sql += ' ORDER BY oh.id DESC';
   if (limit) { sql += ' LIMIT ?'; params.push(Math.min(toInt(limit, 200), 1000)); }
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.all(sql, ...params));
 });
 
 module.exports = router;

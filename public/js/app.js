@@ -10,6 +10,7 @@ const backdrop = document.getElementById('sidebar-backdrop');
 
 let currentRoute = null;
 let eventSource = null;
+let pollTimer = null;
 let systemName = 'Saas Pedidos';
 
 // ---------------------------------------------------------------------------
@@ -206,11 +207,34 @@ async function openNotifPanel() {
 // ---------------------------------------------------------------------------
 // SSE (tempo real)
 // ---------------------------------------------------------------------------
+// No Vercel (serverless) o SSE não funciona; o onerror detecta a falha e o
+// app passa para polling discreto (30s) de notificações + re-render de tela.
+function startPollingFallback() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    refreshNotifBadge();
+    const h = location.hash;
+    if (h === '#/kanban' || h === '#/orders' || h === '#/dashboard' || h.startsWith('#/parties/')) {
+      if (!view.dataset.loading) renderRoute();
+    }
+  }, 30000);
+}
+
 function connectSSE() {
   if (eventSource) { eventSource.close(); eventSource = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (!currentUser()) return;
   eventSource = new EventSource('/api/events');
   let lastNotifAt = Date.now();
+  let failed = false;
+
+  eventSource.onerror = () => {
+    if (failed) return;
+    failed = true;
+    try { eventSource.close(); } catch (_) { /* ignore */ }
+    eventSource = null;
+    startPollingFallback();
+  };
 
   eventSource.addEventListener('order:new', (ev) => {
     const d = JSON.parse(ev.data || '{}');
@@ -276,6 +300,7 @@ async function doLogout() {
   await api.post('/auth/logout').catch(() => {});
   setSession(null, []);
   if (eventSource) { eventSource.close(); eventSource = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   notifCount.hidden = true;
   notifPanel.hidden = true;
   location.hash = '#/login';

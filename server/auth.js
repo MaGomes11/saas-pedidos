@@ -10,26 +10,27 @@ const COOKIE_NAME = 'sb_session';
 // ---------------------------------------------------------------------------
 // Sessões
 // ---------------------------------------------------------------------------
-function createSession(userId) {
+async function createSession(userId) {
   const token = randomToken(32);
   const created = nowIso();
   const expires = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-  db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run(token, userId, created, expires);
+  await db.run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', token, userId, created, expires);
   return token;
 }
 
-function destroySession(token) {
+async function destroySession(token) {
   if (!token) return;
-  db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  await db.run('DELETE FROM sessions WHERE token = ?', token);
 }
 
-function getSessionUser(token) {
+async function getSessionUser(token) {
   if (!token) return null;
-  const row = db.prepare(
+  const row = await db.get(
     `SELECT s.token, u.id, u.name, u.email, u.role, u.active
      FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token = ?`
-  ).get(token);
+     WHERE s.token = ?`,
+    token
+  );
   if (!row) return null;
   if (row.active !== 1) return null;
   return row;
@@ -62,24 +63,28 @@ const PERMISSION_LABELS = {
 
 const ADMIN_ROLE = 'administrador';
 
-function permissionsOf(role) {
-  const rows = db.prepare('SELECT permission FROM role_permissions WHERE role_key = ?').all(role);
+async function permissionsOf(role) {
+  const rows = await db.all('SELECT permission FROM role_permissions WHERE role_key = ?', role);
   return rows.map((r) => r.permission);
 }
 
-function hasPermission(user, perm) {
+async function hasPermission(user, perm) {
   if (!user) return false;
   if (user.role === ADMIN_ROLE) return true;
-  return permissionsOf(user.role).includes(perm);
+  return (await permissionsOf(user.role)).includes(perm);
 }
 
 // ---------------------------------------------------------------------------
 // Middlewares Express
 // ---------------------------------------------------------------------------
-function attachUser(req, res, next) {
-  const token = req.cookies?.[COOKIE_NAME];
-  req.user = token ? getSessionUser(token) : null;
-  next();
+async function attachUser(req, res, next) {
+  try {
+    const token = req.cookies?.[COOKIE_NAME];
+    req.user = token ? await getSessionUser(token) : null;
+    next();
+  } catch (e) {
+    next(e);
+  }
 }
 
 function requireAuth(req, res, next) {
@@ -90,12 +95,16 @@ function requireAuth(req, res, next) {
 }
 
 function requirePermission(perm) {
-  return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: 'Não autenticado.' });
-    if (!hasPermission(req.user, perm)) {
-      return res.status(403).json({ error: 'Acesso negado: você não tem permissão para esta ação.' });
+  return async (req, res, next) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: 'Não autenticado.' });
+      if (!(await hasPermission(req.user, perm))) {
+        return res.status(403).json({ error: 'Acesso negado: você não tem permissão para esta ação.' });
+      }
+      next();
+    } catch (e) {
+      next(e);
     }
-    next();
   };
 }
 

@@ -13,8 +13,8 @@ router.use(requireAuth);
 // ---------------------------------------------------------------------------
 // Status configuráveis (vêm de order_statuses)
 // ---------------------------------------------------------------------------
-function statusRows() {
-  return db.prepare('SELECT * FROM order_statuses ORDER BY sort, id').all();
+async function statusRows() {
+  return db.all('SELECT * FROM order_statuses ORDER BY sort, id');
 }
 
 /** Fluxo ativo (exclui cancelado), ordenado — a ordem define o "próximo status". */
@@ -53,34 +53,40 @@ function audienceOf(perm) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function itemDetail(itemId) {
-  const removed = db.prepare(
-    'SELECT id, ingredient_id, ingredient_name, note FROM order_item_removed WHERE order_item_id = ?'
-  ).all(itemId);
-  const added = db.prepare(
-    'SELECT id, ingredient_id, ingredient_name, quantity, note FROM order_item_added WHERE order_item_id = ?'
-  ).all(itemId);
+async function itemDetail(itemId) {
+  const removed = await db.all(
+    'SELECT id, ingredient_id, ingredient_name, note FROM order_item_removed WHERE order_item_id = ?',
+    itemId
+  );
+  const added = await db.all(
+    'SELECT id, ingredient_id, ingredient_name, quantity, note FROM order_item_added WHERE order_item_id = ?',
+    itemId
+  );
   return { removed, added };
 }
 
-function orderFull(id) {
-  const order = db.prepare(
+async function orderFull(id) {
+  const order = await db.get(
     `SELECT o.*, p.name AS party_name, p.status AS party_status, pt.label AS table_label, pt.status AS table_status,
             u.name AS created_by_name
      FROM orders o
      JOIN parties p ON p.id = o.party_id
      JOIN party_tables pt ON pt.id = o.table_id
      JOIN users u ON u.id = o.created_by
-     WHERE o.id = ?`
-  ).get(id);
+     WHERE o.id = ?`,
+    id
+  );
   if (!order) return null;
-  const items = db.prepare(
-    'SELECT * FROM order_items WHERE order_id = ? ORDER BY sort, id'
-  ).all(id).map((it) => ({ ...it, ...itemDetail(it.id) }));
-  const history = db.prepare(
+  const itemsRows = await db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY sort, id', id);
+  const items = [];
+  for (const it of itemsRows) {
+    items.push({ ...it, ...(await itemDetail(it.id)) });
+  }
+  const history = await db.all(
     `SELECT oh.*, u.name AS user_name FROM order_history oh JOIN users u ON u.id = oh.user_id
-     WHERE oh.order_id = ? ORDER BY oh.id`
-  ).all(id);
+     WHERE oh.order_id = ? ORDER BY oh.id`,
+    id
+  );
   return { ...order, items, history };
 }
 
@@ -100,33 +106,33 @@ function digestItems(items) {
 }
 
 /** Valida se todos os pratos pertencem e estão disponíveis no cardápio da festa. */
-function validateMenu(partyId, items) {
+async function validateMenu(partyId, items) {
   const errors = [];
   for (const it of items) {
-    const row = db.prepare(
+    const row = await db.get(
       `SELECT d.name FROM party_dishes pd JOIN dishes d ON d.id = pd.dish_id
-       WHERE pd.party_id = ? AND pd.dish_id = ? AND pd.available = 1 AND d.active = 1`
-    ).get(partyId, it.dish_id);
+       WHERE pd.party_id = ? AND pd.dish_id = ? AND pd.available = 1 AND d.active = 1`,
+      partyId, it.dish_id
+    );
     if (!row) errors.push(`Prato #${it.dish_id} não está disponível no cardápio desta festa.`);
   }
   return errors;
 }
 
-function insertItem(orderId, it, sort) {
-  const dish = db.prepare('SELECT name, category FROM dishes WHERE id = ?').get(it.dish_id);
-  const info = db.prepare(
-    'INSERT INTO order_items (order_id, dish_id, dish_name, dish_category, quantity, notes, sort) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(orderId, it.dish_id, dish?.name || `Prato #${it.dish_id}`, dish?.category || '', it.quantity, it.notes, sort);
+async function insertItem(orderId, it, sort) {
+  const dish = await db.get('SELECT name, category FROM dishes WHERE id = ?', it.dish_id);
+  const info = await db.run(
+    'INSERT INTO order_items (order_id, dish_id, dish_name, dish_category, quantity, notes, sort) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    orderId, it.dish_id, dish?.name || `Prato #${it.dish_id}`, dish?.category || '', it.quantity, it.notes, sort
+  );
   const itemId = info.lastInsertRowid;
-  const insR = db.prepare('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)');
   for (const r of it.removed) {
-    const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(r.ingredient_id);
-    if (ing) insR.run(itemId, r.ingredient_id, ing.name, r.note);
+    const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', r.ingredient_id);
+    if (ing) await db.run('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)', itemId, r.ingredient_id, ing.name, r.note);
   }
-  const insA = db.prepare('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)');
   for (const a of it.added) {
-    const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(a.ingredient_id);
-    if (ing) insA.run(itemId, a.ingredient_id, ing.name, a.quantity, a.note);
+    const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', a.ingredient_id);
+    if (ing) await db.run('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)', itemId, a.ingredient_id, ing.name, a.quantity, a.note);
   }
   return itemId;
 }
@@ -134,7 +140,7 @@ function insertItem(orderId, it, sort) {
 // ---------------------------------------------------------------------------
 // Lista com filtros (Kanban / lista de pedidos / busca)
 // ---------------------------------------------------------------------------
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const {
     party_id, table_id, status, q, dish, user, date_from, date_to, ingredient, category, limit,
   } = req.query;
@@ -177,43 +183,46 @@ router.get('/', (req, res) => {
   sql += ' ORDER BY o.created_at DESC, o.id DESC';
   if (limit) { sql += ' LIMIT ?'; params.push(Math.min(toInt(limit, 50), 500)); }
 
-  const orders = db.prepare(sql).all(...params).map((o) => {
-    const items = db.prepare('SELECT dish_name, dish_category, quantity, notes FROM order_items WHERE order_id = ? ORDER BY sort').all(o.id);
-    return { ...o, items };
-  });
+  const rows = await db.all(sql, ...params);
+  const orders = [];
+  for (const o of rows) {
+    const items = await db.all('SELECT dish_name, dish_category, quantity, notes FROM order_items WHERE order_id = ? ORDER BY sort', o.id);
+    orders.push({ ...o, items });
+  }
   res.json(stripFinancial(orders));
 });
 
 // ---------------------------------------------------------------------------
 // Detalhe
 // ---------------------------------------------------------------------------
-router.get('/:id', (req, res) => {
-  const order = orderFull(toInt(req.params.id));
+router.get('/:id', async (req, res) => {
+  const order = await orderFull(toInt(req.params.id));
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
   res.json(stripFinancial(order));
 });
 
-router.get('/:id/history', (req, res) => {
-  const order = db.prepare('SELECT id FROM orders WHERE id = ?').get(toInt(req.params.id));
+router.get('/:id/history', async (req, res) => {
+  const order = await db.get('SELECT id FROM orders WHERE id = ?', toInt(req.params.id));
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
-  const history = db.prepare(
+  const history = await db.all(
     `SELECT oh.*, u.name AS user_name FROM order_history oh JOIN users u ON u.id = oh.user_id
-     WHERE oh.order_id = ? ORDER BY oh.id DESC`
-  ).all(order.id);
+     WHERE oh.order_id = ? ORDER BY oh.id DESC`,
+    order.id
+  );
   res.json(history);
 });
 
 // ---------------------------------------------------------------------------
 // Criar pedido
 // ---------------------------------------------------------------------------
-router.post('/', requirePermission('pedidos_criar'), (req, res) => {
+router.post('/', requirePermission('pedidos_criar'), async (req, res) => {
   const { client_request_id, party_id, table_id, notes = '', priority = 0, items = [], mark_table_occupied = true } = req.body || {};
 
   // Prevenção de envio duplicado
   if (client_request_id) {
-    const existing = db.prepare('SELECT order_id FROM idempotency_keys WHERE key = ?').get(String(client_request_id).trim());
+    const existing = await db.get('SELECT order_id FROM idempotency_keys WHERE key = ?', String(client_request_id).trim());
     if (existing) {
-      const order = orderFull(existing.order_id);
+      const order = await orderFull(existing.order_id);
       return res.status(200).json({ order, duplicate: true });
     }
   }
@@ -221,49 +230,50 @@ router.post('/', requirePermission('pedidos_criar'), (req, res) => {
   if (!party_id || !table_id) return res.status(400).json({ error: 'Selecione a festa e a mesa.' });
   if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Adicione ao menos um prato ao pedido.' });
 
-  const party = db.prepare('SELECT * FROM parties WHERE id = ?').get(toInt(party_id));
+  const party = await db.get('SELECT * FROM parties WHERE id = ?', toInt(party_id));
   if (!party) return res.status(404).json({ error: 'Festa não encontrada.' });
   if (party.status !== 'ativa') {
     return res.status(409).json({ error: `Não é possível lançar pedidos: a festa está "${party.status}".` });
   }
-  const table = db.prepare('SELECT * FROM party_tables WHERE id = ? AND party_id = ?').get(toInt(table_id), party.id);
+  const table = await db.get('SELECT * FROM party_tables WHERE id = ? AND party_id = ?', toInt(table_id), party.id);
   if (!table) return res.status(404).json({ error: 'A mesa não pertence a esta festa.' });
   if (table.status === 'bloqueada' || table.status === 'encerrada') {
     return res.status(409).json({ error: `A mesa "${table.label}" está ${table.status === 'bloqueada' ? 'bloqueada' : 'encerrada'} e não aceita pedidos.` });
   }
 
   const cleanItems = digestItems(items);
-  const menuErrors = validateMenu(party.id, cleanItems);
+  const menuErrors = await validateMenu(party.id, cleanItems);
   if (menuErrors.length) return res.status(400).json({ error: menuErrors.join(' ') });
 
   const now = nowIso();
-  const seq = db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM orders').get().m + 1;
+  const seqRow = await db.get('SELECT COALESCE(MAX(id), 0) AS m FROM orders');
+  const seq = seqRow.m + 1;
   const code = formatCode(seq);
-
-  const create = db.transaction(() => {
-    const info = db.prepare(
-      `INSERT INTO orders (code, party_id, table_id, status, priority, notes, cancel_justification, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, 'novo', ?, ?, '', ?, ?, ?)`
-    ).run(code, party.id, table.id, priority ? 1 : 0, String(notes).trim(), req.user.id, now, now);
-    const orderId = info.lastInsertRowid;
-    cleanItems.forEach((it, i) => insertItem(orderId, it, i));
-    db.prepare(
-      'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?)'
-    ).run(orderId, 'created', `Pedido ${code} criado na ${table.label}.`, 'novo', req.user.id, now);
-    if (client_request_id) {
-      db.prepare('INSERT OR IGNORE INTO idempotency_keys (key, order_id, created_at) VALUES (?, ?, ?)')
-        .run(String(client_request_id).trim(), orderId, now);
-    }
-    if (mark_table_occupied !== false) {
-      db.prepare("UPDATE party_tables SET status = 'ocupada' WHERE id = ? AND status = 'livre'").run(table.id);
-    }
-    audit('order', orderId, 'created', `Pedido ${code} criado (${party.name}, ${table.label}).`, req.user.id);
-    return orderId;
-  });
 
   let orderId;
   try {
-    orderId = create();
+    orderId = await db.tx(async () => {
+      const info = await db.run(
+        `INSERT INTO orders (code, party_id, table_id, status, priority, notes, cancel_justification, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'novo', ?, ?, '', ?, ?, ?)`,
+        code, party.id, table.id, priority ? 1 : 0, String(notes).trim(), req.user.id, now, now
+      );
+      const newId = info.lastInsertRowid;
+      for (let i = 0; i < cleanItems.length; i++) await insertItem(newId, cleanItems[i], i);
+      await db.run(
+        'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?)',
+        newId, 'created', `Pedido ${code} criado na ${table.label}.`, 'novo', req.user.id, now
+      );
+      if (client_request_id) {
+        await db.run('INSERT OR IGNORE INTO idempotency_keys (key, order_id, created_at) VALUES (?, ?, ?)',
+          String(client_request_id).trim(), newId, now);
+      }
+      if (mark_table_occupied !== false) {
+        await db.run("UPDATE party_tables SET status = 'ocupada' WHERE id = ? AND status = 'livre'", table.id);
+      }
+      await audit('order', newId, 'created', `Pedido ${code} criado (${party.name}, ${table.label}).`, req.user.id);
+      return newId;
+    });
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) {
       return res.status(409).json({ error: 'Pedido duplicado detectado. Tente novamente.' });
@@ -271,33 +281,33 @@ router.post('/', requirePermission('pedidos_criar'), (req, res) => {
     throw e;
   }
 
-  notify({
+  await notify({
     type: 'new_order', title: `Novo pedido ${code}`,
     message: `${party.name} · ${table.label} · ${cleanItems.length} item(ns)`,
     partyId: party.id, orderId, audience: 'cozinha',
   });
   broadcast('order:new', { orderId, partyId: party.id, code, tableLabel: table.label });
 
-  res.status(201).json({ order: orderFull(orderId) });
+  res.status(201).json({ order: await orderFull(orderId) });
 });
 
 // ---------------------------------------------------------------------------
 // Editar pedido (itens, notas, prioridade)
 // ---------------------------------------------------------------------------
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const id = toInt(req.params.id);
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', id);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
-  const statuses = statusRows();
+  const statuses = await statusRows();
   const flow = flowKeys(statuses);
   const editableKeys = flow.slice(0, 2).map((s) => s.key);
   const editable = editableKeys.includes(order.status) && order.status !== 'cancelado';
-  const adminAllows = isAdmin(req.user) && hasPermission(req.user, 'pedidos_editar_finalizados');
+  const adminAllows = isAdmin(req.user) && (await hasPermission(req.user, 'pedidos_editar_finalizados'));
   if (!editable && !adminAllows) {
     return res.status(409).json({ error: 'Este pedido não está mais editável (status: ' + labelOf(order.status, statuses) + ').' });
   }
-  if (editable && !hasPermission(req.user, 'pedidos_editar')) {
+  if (editable && !(await hasPermission(req.user, 'pedidos_editar'))) {
     return res.status(403).json({ error: 'Seu perfil não permite editar pedidos.' });
   }
   if (order.status === 'cancelado') {
@@ -308,114 +318,109 @@ router.put('/:id', (req, res) => {
   if (!Array.isArray(items)) return res.status(400).json({ error: 'Envie a lista de itens do pedido.' });
 
   const cleanItems = digestItems(items);
-  const menuErrors = validateMenu(order.party_id, cleanItems);
+  const menuErrors = await validateMenu(order.party_id, cleanItems);
   if (menuErrors.length) return res.status(400).json({ error: menuErrors.join(' ') });
 
   const now = nowIso();
   const changes = [];
 
-  const edit = db.transaction(() => {
-    const existingItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
+  await db.tx(async () => {
+    const existingItems = await db.all('SELECT * FROM order_items WHERE order_id = ?', order.id);
     const incomingIds = new Set(cleanItems.filter((it) => it.id).map((it) => it.id));
 
     // Itens removidos do pedido
     for (const ex of existingItems) {
       if (!incomingIds.has(ex.id)) {
-        db.prepare('DELETE FROM order_items WHERE id = ?').run(ex.id);
+        await db.run('DELETE FROM order_items WHERE id = ?', ex.id);
         changes.push(`removido: ${ex.quantity}x ${ex.dish_name}`);
       }
     }
 
-    const updItem = db.prepare('UPDATE order_items SET quantity = ?, notes = ?, dish_name = ?, dish_category = ? WHERE id = ?');
-    const updRemoved = db.prepare('DELETE FROM order_item_removed WHERE order_item_id = ?');
-    const updAdded = db.prepare('DELETE FROM order_item_added WHERE order_item_id = ?');
-
-    cleanItems.forEach((it, i) => {
+    for (let i = 0; i < cleanItems.length; i++) {
+      const it = cleanItems[i];
       if (it.id) {
-        const ex = db.prepare('SELECT * FROM order_items WHERE id = ? AND order_id = ?').get(it.id, order.id);
+        const ex = await db.get('SELECT * FROM order_items WHERE id = ? AND order_id = ?', it.id, order.id);
         if (ex) {
           if (ex.dish_id !== it.dish_id) {
             // Trocou o prato → trata como remoção + inclusão
-            db.prepare('DELETE FROM order_items WHERE id = ?').run(ex.id);
+            await db.run('DELETE FROM order_items WHERE id = ?', ex.id);
             changes.push(`removido: ${ex.quantity}x ${ex.dish_name}`);
-            const dish = db.prepare('SELECT name, category FROM dishes WHERE id = ?').get(it.dish_id);
-            const info2 = db.prepare(
-              'INSERT INTO order_items (order_id, dish_id, dish_name, dish_category, quantity, notes, sort) VALUES (?, ?, ?, ?, ?, ?, ?)'
-            ).run(order.id, it.dish_id, dish?.name || 'Prato', dish?.category || '', it.quantity, it.notes, i);
+            const dish = await db.get('SELECT name, category FROM dishes WHERE id = ?', it.dish_id);
+            const info2 = await db.run(
+              'INSERT INTO order_items (order_id, dish_id, dish_name, dish_category, quantity, notes, sort) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              order.id, it.dish_id, dish?.name || 'Prato', dish?.category || '', it.quantity, it.notes, i
+            );
             const nid = info2.lastInsertRowid;
-            const insR = db.prepare('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)');
             for (const r of it.removed) {
-              const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(r.ingredient_id);
-              if (ing) insR.run(nid, r.ingredient_id, ing.name, r.note);
+              const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', r.ingredient_id);
+              if (ing) await db.run('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)', nid, r.ingredient_id, ing.name, r.note);
             }
-            const insA = db.prepare('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)');
             for (const a of it.added) {
-              const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(a.ingredient_id);
-              if (ing) insA.run(nid, a.ingredient_id, ing.name, a.quantity, a.note);
+              const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', a.ingredient_id);
+              if (ing) await db.run('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)', nid, a.ingredient_id, ing.name, a.quantity, a.note);
             }
             changes.push(`adicionado: ${it.quantity}x ${dish?.name || 'Prato'}`);
           } else {
-            const dish = db.prepare('SELECT name, category FROM dishes WHERE id = ?').get(it.dish_id);
+            const dish = await db.get('SELECT name, category FROM dishes WHERE id = ?', it.dish_id);
             if (ex.quantity !== it.quantity) changes.push(`${ex.dish_name}: quantidade ${ex.quantity} → ${it.quantity}`);
             if (ex.notes !== it.notes) changes.push(`${ex.dish_name}: observação alterada`);
-            updItem.run(it.quantity, it.notes, dish?.name || ex.dish_name, dish?.category || ex.dish_category, ex.id);
-            updRemoved.run(ex.id);
-            updAdded.run(ex.id);
-            const insR = db.prepare('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)');
+            await db.run('UPDATE order_items SET quantity = ?, notes = ?, dish_name = ?, dish_category = ? WHERE id = ?',
+              it.quantity, it.notes, dish?.name || ex.dish_name, dish?.category || ex.dish_category, ex.id);
+            await db.run('DELETE FROM order_item_removed WHERE order_item_id = ?', ex.id);
+            await db.run('DELETE FROM order_item_added WHERE order_item_id = ?', ex.id);
             for (const r of it.removed) {
-              const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(r.ingredient_id);
-              if (ing) insR.run(ex.id, r.ingredient_id, ing.name, r.note);
+              const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', r.ingredient_id);
+              if (ing) await db.run('INSERT INTO order_item_removed (order_item_id, ingredient_id, ingredient_name, note) VALUES (?, ?, ?, ?)', ex.id, r.ingredient_id, ing.name, r.note);
             }
-            const insA = db.prepare('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)');
             for (const a of it.added) {
-              const ing = db.prepare('SELECT name FROM ingredients WHERE id = ?').get(a.ingredient_id);
-              if (ing) insA.run(ex.id, a.ingredient_id, ing.name, a.quantity, a.note);
+              const ing = await db.get('SELECT name FROM ingredients WHERE id = ?', a.ingredient_id);
+              if (ing) await db.run('INSERT INTO order_item_added (order_item_id, ingredient_id, ingredient_name, quantity, note) VALUES (?, ?, ?, ?, ?)', ex.id, a.ingredient_id, ing.name, a.quantity, a.note);
             }
           }
         } else {
-          insertItem(order.id, it, i);
+          await insertItem(order.id, it, i);
           changes.push(`adicionado: ${it.quantity}x ${it.dish_id}`);
         }
       } else {
-        insertItem(order.id, it, i);
-        const dish = db.prepare('SELECT name FROM dishes WHERE id = ?').get(it.dish_id);
+        await insertItem(order.id, it, i);
+        const dish = await db.get('SELECT name FROM dishes WHERE id = ?', it.dish_id);
         changes.push(`adicionado: ${it.quantity}x ${dish?.name || 'Prato'}`);
       }
-    });
+    }
 
     // Notas e prioridade
     if (notes !== undefined && String(notes) !== order.notes) {
       changes.push('observações do pedido alteradas');
-      db.prepare('UPDATE orders SET notes = ? WHERE id = ?').run(String(notes), order.id);
+      await db.run('UPDATE orders SET notes = ? WHERE id = ?', String(notes), order.id);
     }
     if (priority !== undefined && (priority ? 1 : 0) !== order.priority) {
       changes.push(priority ? 'prioridade marcada como alta' : 'prioridade removida');
-      db.prepare('UPDATE orders SET priority = ? WHERE id = ?').run(priority ? 1 : 0, order.id);
+      await db.run('UPDATE orders SET priority = ? WHERE id = ?', priority ? 1 : 0, order.id);
     }
-    db.prepare('UPDATE orders SET updated_at = ? WHERE id = ?').run(now, order.id);
+    await db.run('UPDATE orders SET updated_at = ? WHERE id = ?', now, order.id);
 
-    db.prepare(
-      'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(order.id, 'edited', changes.length ? `Alteração: ${changes.join('; ')}.` : 'Edição sem alterações efetivas.', order.status, order.status, req.user.id, now);
-    audit('order', order.id, 'edited', `Pedido ${order.code} editado: ${changes.slice(0, 8).join('; ')}.`, req.user.id);
+    await db.run(
+      'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      order.id, 'edited', changes.length ? `Alteração: ${changes.join('; ')}.` : 'Edição sem alterações efetivas.', order.status, order.status, req.user.id, now
+    );
+    await audit('order', order.id, 'edited', `Pedido ${order.code} editado: ${changes.slice(0, 8).join('; ')}.`, req.user.id);
   });
 
-  edit();
   broadcast('order:edited', { orderId: order.id, code: order.code, partyId: order.party_id });
-  res.json({ order: orderFull(order.id), changes });
+  res.json({ order: await orderFull(order.id), changes });
 });
 
 // ---------------------------------------------------------------------------
 // Mudança de status
 // ---------------------------------------------------------------------------
-router.patch('/:id/status', (req, res) => {
+router.patch('/:id/status', async (req, res) => {
   const id = toInt(req.params.id);
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  const order = await db.get('SELECT * FROM orders WHERE id = ?', id);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
   const { status, justification = '' } = req.body || {};
   if (!status) return res.status(400).json({ error: 'Informe o novo status.' });
 
-  const statuses = statusRows();
+  const statuses = await statusRows();
   const target = statuses.find((s) => s.key === status);
   if (!target) return res.status(400).json({ error: 'Status inválido.' });
 
@@ -429,12 +434,12 @@ router.patch('/:id/status', (req, res) => {
   if (isAdmin(req.user)) {
     allowed = true; // administrador pode mover qualquer status (cancelamento exige justificativa)
   } else if (status === 'cancelado') {
-    allowed = hasPermission(req.user, 'pedidos_cancelar')
+    allowed = (await hasPermission(req.user, 'pedidos_cancelar'))
       && current !== 'cancelado'
       && (!terminal || current !== terminal.key);
   } else if (next && next.key === status && target.active === 1) {
     // Avanço normal: apenas para o próximo status da ordem, se o alvo estiver ativo
-    allowed = !target.advance_perm || hasPermission(req.user, target.advance_perm);
+    allowed = !target.advance_perm || (await hasPermission(req.user, target.advance_perm));
   }
 
   if (!allowed) {
@@ -445,9 +450,8 @@ router.patch('/:id/status', (req, res) => {
   }
 
   const now = nowIso();
-  db.prepare(
-    `UPDATE orders SET status = ?, cancel_justification = ?, finished_at = ?, updated_at = ? WHERE id = ?`
-  ).run(
+  await db.run(
+    `UPDATE orders SET status = ?, cancel_justification = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
     status,
     status === 'cancelado' ? justification.trim() : '',
     status === 'cancelado' || (terminal && status === terminal.key) ? now : null,
@@ -459,16 +463,17 @@ router.patch('/:id/status', (req, res) => {
     ? `Pedido cancelado (${justification.trim()})`
     : `Status alterado para "${labelOf(status, statuses)}"`;
 
-  db.prepare(
-    'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, status === 'cancelado' ? 'cancelado' : 'status_changed', verb, current, status, req.user.id, now);
-  audit('order', id, 'status', `Pedido ${order.code}: ${current} → ${status}.`, req.user.id);
+  await db.run(
+    'INSERT INTO order_history (order_id, action, description, from_status, to_status, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, status === 'cancelado' ? 'cancelado' : 'status_changed', verb, current, status, req.user.id, now
+  );
+  await audit('order', id, 'status', `Pedido ${order.code}: ${current} → ${status}.`, req.user.id);
 
   // Notificações
   if (status === 'cancelado') {
-    notify({ type: 'warning', title: `Pedido ${order.code} cancelado`, message: justification.trim(), partyId: order.party_id, orderId: id, audience: '*' });
+    await notify({ type: 'warning', title: `Pedido ${order.code} cancelado`, message: justification.trim(), partyId: order.party_id, orderId: id, audience: '*' });
   } else {
-    notify({
+    await notify({
       type: 'status', title: `Pedido ${order.code} agora é "${labelOf(status, statuses)}"`,
       message: `${order.code} · ${labelOf(status, statuses)}`,
       partyId: order.party_id, orderId: id, audience: audienceOf(target.advance_perm),
@@ -476,7 +481,7 @@ router.patch('/:id/status', (req, res) => {
   }
   broadcast('order:status', { orderId: id, code: order.code, from: current, to: status, partyId: order.party_id });
 
-  res.json({ order: orderFull(id) });
+  res.json({ order: await orderFull(id) });
 });
 
 module.exports = router;

@@ -9,33 +9,33 @@ const {
 
 const router = express.Router();
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'Informe e-mail e senha.' });
   }
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim().toLowerCase());
+  const user = await db.get('SELECT * FROM users WHERE email = ?', String(email).trim().toLowerCase());
   if (!user || user.active !== 1 || !bcrypt.compareSync(String(password), user.password_hash)) {
     return res.status(401).json({ error: 'Credenciais inválidas ou usuário inativo.' });
   }
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000,
     path: '/',
   });
-  return res.json({ user: publicUser(user), permissions: permissionsOf(user.role) });
+  return res.json({ user: publicUser(user), permissions: await permissionsOf(user.role) });
 });
 
-router.post('/logout', (req, res) => {
-  destroySession(req.cookies?.[COOKIE_NAME]);
+router.post('/logout', async (req, res) => {
+  await destroySession(req.cookies?.[COOKIE_NAME]);
   res.clearCookie(COOKIE_NAME, { path: '/' });
   res.json({ ok: true });
 });
 
-router.get('/me', requireAuth, (req, res) => {
-  res.json({ user: publicUser(req.user), permissions: permissionsOf(req.user.role) });
+router.get('/me', requireAuth, async (req, res) => {
+  res.json({ user: publicUser(req.user), permissions: await permissionsOf(req.user.role) });
 });
 
 router.get('/permission-labels', requireAuth, (req, res) => {
